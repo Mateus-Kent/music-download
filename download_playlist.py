@@ -15,45 +15,70 @@ except ImportError:
     print("Execute: pip install yt-dlp")
     sys.exit(1)
 
+AUDIO_FORMATS = {"mp3", "m4a", "opus", "wav", "flac"}
+VIDEO_FORMATS = {"mp4", "mkv", "webm"}
+
 
 def progress_hook(d):
-    if d["status"] == "downloading":
-        percent = d.get("_percent_str", "?%").strip()
-        speed = d.get("_speed_str", "?").strip()
-        eta = d.get("_eta_str", "?").strip()
-        filename = os.path.basename(d.get("filename", ""))
-        print(f"\r  [{percent}] {filename} — velocidade: {speed} — ETA: {eta}", end="", flush=True)
-    elif d["status"] == "finished":
+    if d["status"] == "finished":
         print()
+        return
+
+    if d["status"] != "downloading":
+        return
+
+    percent = d.get("_percent_str", "?%").strip()
+    speed = d.get("_speed_str", "?").strip()
+    eta = d.get("_eta_str", "?").strip()
+    filename = os.path.basename(d.get("filename", ""))
+    print(f"\r  [{percent}] {filename} — velocidade: {speed} — ETA: {eta}", end="", flush=True)
 
 
-def build_options(output_dir: str, audio_only: bool, quality: str, format_ext: str) -> dict:
-    os.makedirs(output_dir, exist_ok=True)
-
-    outtmpl = os.path.join(output_dir, "%(playlist_index)s - %(title)s.%(ext)s")
-
-    if audio_only:
-        return {
-            "format": "bestaudio/best",
-            "outtmpl": outtmpl,
-            "progress_hooks": [progress_hook],
-            "ignoreerrors": True,
-            "postprocessors": [
-                {
-                    "key": "FFmpegExtractAudio",
-                    "preferredcodec": format_ext,
-                    "preferredquality": quality,
-                }
-            ],
-        }
-
+def build_audio_options(outtmpl: str, quality: str, fmt: str) -> dict:
     return {
-        "format": f"bestvideo[ext={format_ext}]+bestaudio/best[ext={format_ext}]/best",
+        "format": "bestaudio/best",
         "outtmpl": outtmpl,
         "progress_hooks": [progress_hook],
         "ignoreerrors": True,
-        "merge_output_format": format_ext,
+        "postprocessors": [
+            {
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": fmt,
+                "preferredquality": quality,
+            }
+        ],
     }
+
+
+def build_video_options(outtmpl: str, fmt: str) -> dict:
+    return {
+        "format": f"bestvideo[ext={fmt}]+bestaudio/best[ext={fmt}]/best",
+        "outtmpl": outtmpl,
+        "progress_hooks": [progress_hook],
+        "ignoreerrors": True,
+        "merge_output_format": fmt,
+    }
+
+
+def build_options(output_dir: str, audio_only: bool, quality: str, fmt: str) -> dict:
+    os.makedirs(output_dir, exist_ok=True)
+    outtmpl = os.path.join(output_dir, "%(playlist_index)s - %(title)s.%(ext)s")
+
+    if audio_only:
+        return build_audio_options(outtmpl, quality, fmt)
+    return build_video_options(outtmpl, fmt)
+
+
+def resolve_format(fmt: str, audio_only: bool) -> tuple[str, bool]:
+    if fmt in AUDIO_FORMATS:
+        return fmt, True
+    if fmt in VIDEO_FORMATS:
+        return fmt, False
+
+    print(f"Formato inválido: {fmt}")
+    print(f"  Áudio : {', '.join(AUDIO_FORMATS)}")
+    print(f"  Vídeo : {', '.join(VIDEO_FORMATS)}")
+    sys.exit(1)
 
 
 def download(url: str, options: dict):
@@ -108,25 +133,9 @@ def main():
 
     args = parser.parse_args()
 
-    audio_only = args.audio
-
-    if args.fmt:
-        fmt = args.fmt.lower()
-    else:
-        fmt = "mp3" if audio_only else "mp4"
-
-    audio_formats = {"mp3", "m4a", "opus", "wav", "flac"}
-    video_formats = {"mp4", "mkv", "webm"}
-
-    if fmt in audio_formats:
-        audio_only = True
-    elif fmt in video_formats:
-        audio_only = False
-    else:
-        print(f"Formato inválido: {fmt}")
-        print(f"  Áudio : {', '.join(audio_formats)}")
-        print(f"  Vídeo : {', '.join(video_formats)}")
-        sys.exit(1)
+    default_fmt = "mp3" if args.audio else "mp4"
+    fmt = (args.fmt or default_fmt).lower()
+    fmt, audio_only = resolve_format(fmt, args.audio)
 
     options = build_options(args.output, audio_only, args.quality, fmt)
     download(args.url, options)
